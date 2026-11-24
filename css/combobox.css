@@ -1,0 +1,21 @@
+/* Searchable dropdown (FIX-1), loaded by combobox.js only, so it never blocks the first paint.
+   The native select stays in the form (visually hidden) and sends the value. */
+.field select[data-cbx-native] { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); border: 0; opacity: 0; pointer-events: none; }
+.cbx { position: relative; }
+.field .cbx__input { padding-right: 44px; text-overflow: ellipsis; cursor: pointer; }
+.field .cbx__input:focus { cursor: text; padding-right: 43px; }
+.cbx__input::placeholder { color: var(--muted); opacity: 1; }
+.cbx__toggle { position: absolute; top: 0; right: 0; width: 44px; height: 48px; border: 0; padding: 0; background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%231A1814' stroke-width='1.5' fill='none'/%3E%3C/svg%3E") no-repeat right 14px center; cursor: pointer; }
+.cbx.is-open .cbx__toggle { transform: scaleY(-1); }
+.cbx__pop { position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 4px); background: #fff; border: 1px solid var(--field-border); border-radius: var(--radius); box-shadow: var(--shadow-pop); font-size: 16px; font-weight: 400; }
+.cbx--up .cbx__pop { top: auto; bottom: calc(100% + 4px); }
+.cbx__pop[hidden] { display: none; }
+.cbx__list { list-style: none; margin: 0; padding: 4px 0; overflow-y: auto; overscroll-behavior: contain; max-height: 288px; }
+.cbx__list[hidden] { display: none; }
+.cbx__opt { display: flex; align-items: center; min-height: 44px; padding: 8px 14px; line-height: 1.35; cursor: pointer; color: var(--body); }
+.cbx__opt.is-active { background: var(--band); }
+.cbx__opt[aria-selected="true"] { font-weight: 700; }
+.cbx__opt[aria-selected="true"]::after { content: ''; margin-left: auto; width: 12px; height: 8px; flex: none; border-left: 2px solid var(--green); border-bottom: 2px solid var(--green); transform: rotate(-45deg) translateY(-2px); }
+.cbx__sep { height: 1px; margin: 4px 14px; background: var(--hair); }
+.cbx__empty { margin: 0; padding: 12px 14px; color: var(--muted); line-height: 1.4; }
+@media (min-width: 768px) { .cbx__pop { font-size: 15px; } .cbx__opt { min-height: 40px; } }

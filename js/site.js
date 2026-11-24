@@ -38,6 +38,7 @@
     gtag('consent', 'update', { analytics_storage: 'granted' }); // ads stay denied
     gtag('js', new Date());
     gtag('config', ga4, { allow_google_signals: false, allow_ad_personalization_signals: false });
+    pageEvents();
     var g = d.createElement('script'); g.async = true; g.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(ga4);
     d.head.appendChild(g);
   }
@@ -55,10 +56,25 @@
     if (!gaOn) { if (cb) cb(); return; }
     var done = false, fin = function () { if (!done) { done = true; if (cb) cb(); } };
     params = params || {}; params.page_type = pageType();
-    if (cb) { params.event_callback = fin; params.transport_type = 'beacon'; setTimeout(fin, 500); }
+    if (cb) { params.event_callback = fin; setTimeout(fin, 500); }
     gtag('event', name, params);
   }
   window.TT.track = track;
+  /* GA-1 helpers. Event names and parameters: ANALYTICS.md at the repo root. No personal data in any event. */
+  // Where on the page a click happened: the nearest data-loc (header, footer, floating_tab, mobile_bar, hero,
+  // product_card…), otherwise the page itself (e.g. contact_page, product_page, category_page).
+  function where(el) { var l = el && el.closest && el.closest('[data-loc]'); return l ? l.getAttribute('data-loc') : pageType() + '_page'; }
+  // The product a click belongs to: the card around it, else the product page's own product.
+  function itemOf(el) {
+    var x = (el && el.closest && el.closest('[data-item-id]:not(form)')) || (pageType() === 'product' ? d.querySelector('[data-product]') : null);
+    return x ? { item_id: x.getAttribute('data-item-id'), item_name: x.getAttribute('data-item-name') || '', item_category: x.getAttribute('data-item-category') || '' } : null;
+  }
+  function itemParams(it) { return { item_id: it.item_id, item_name: it.item_name, item_category: it.item_category, items: [it] }; }
+  // Events that belong to the page view: sent when analytics starts (at load, or when the visitor accepts later).
+  function pageEvents() {
+    var it = pageType() === 'product' && itemOf(null);
+    if (it) track('view_item', itemParams(it));
+  }
   // Campaign tags on the landing URL are kept for this tab only and sent with an enquiry.
   try {
     var q0 = new URLSearchParams(location.search), u0 = {}, any = false;
@@ -87,7 +103,7 @@
   }
   if (openBtn) openBtn.addEventListener('click', function () { setMenu(true); });
   $$('[data-menu-close]').forEach(function (b) { b.addEventListener('click', function () { setMenu(false); }); });
-  d.addEventListener('keydown', function (e) { if (e.key === 'Escape' && menu && !menu.hidden) setMenu(false); });
+  d.addEventListener('keydown', function (e) { if (e.key === 'Escape' && menu && !menu.hidden && !d.querySelector('dialog[open]')) setMenu(false); });
 
   /* Popovers: contact tab and tray */
   function popover(btn, panel, onToggle) {
@@ -104,7 +120,7 @@
       }
     });
     d.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && !panel.hidden) { panel.hidden = true; btn.setAttribute('aria-expanded', 'false'); if (onToggle) onToggle(false); btn.focus(); }
+      if (e.key === 'Escape' && !panel.hidden && !d.querySelector('dialog[open]')) { panel.hidden = true; btn.setAttribute('aria-expanded', 'false'); if (onToggle) onToggle(false); btn.focus(); }
     });
   }
   var ctabLabel = $('[data-ctab-label]');
@@ -219,7 +235,7 @@
     if (b) {
       var id = b.getAttribute('data-add');
       if (has(id)) remove(id);
-      else { add({ id: id, name: b.getAttribute('data-add-name'), url: b.getAttribute('data-add-url'), img: b.getAttribute('data-add-img') }); track('enquiry_list_add', { item_id: id }); showToast(b.getAttribute('data-add-name')); }
+      else { add({ id: id, name: b.getAttribute('data-add-name'), url: b.getAttribute('data-add-url'), img: b.getAttribute('data-add-img') }); var it = itemOf(b) || { item_id: id, item_name: b.getAttribute('data-add-name') || '', item_category: '' }; track('enquiry_list_add', itemParams(it)); showToast(b.getAttribute('data-add-name')); }
       return;
     }
     var r = e.target.closest && e.target.closest('[data-remove]');
@@ -241,13 +257,58 @@
     });
   });
 
-  /* Contact clicks: WhatsApp, email, WeChat (the ID is text, so a click on it counts). */
+  /* Clicks (GA-1): WhatsApp and email links, and every link to the quote form ("Get a quote", the enquiry list,
+     factory tour, catalogue). gtag sends hits with keepalive/beacon, so a page change never waits for analytics. */
   d.addEventListener('click', function (e) {
-    var a = e.target.closest && e.target.closest('a[href^="https://wa.me/"], a[href^="mailto:"], [data-wechat]');
+    var a = e.target.closest && e.target.closest('a[href]');
     if (!a) return;
     var h = a.getAttribute('href') || '';
-    track(h.indexOf('mailto:') === 0 ? 'email_click' : h.indexOf('https://wa.me/') === 0 ? 'whatsapp_click' : 'wechat_open');
+    if (h.indexOf('mailto:') === 0 || h.indexOf('https://wa.me/') === 0) {
+      track(h.indexOf('mailto:') === 0 ? 'email_click' : 'whatsapp_click', { contact_location: where(a) });
+    } else if (/#(quote|enquire)$/.test(h) || a.hasAttribute('data-cta')) {
+      var p = { cta_location: a.getAttribute('data-cta') || where(a) }, it = itemOf(a);
+      if (it) p.item_id = it.item_id;
+      track('quote_cta_click', p);
+    }
   });
+
+  /* WeChat dialog (GA-1): every WeChat button opens it; Esc, the close button or a click outside closes it,
+     and focus goes back to the button that opened it. */
+  var wx = $('[data-wechat-dialog]'), wxFrom = null, wxLoc = '';
+  if (wx) {
+    var wxCopy = $('[data-wechat-copy]', wx), wxStatus = $('[data-wechat-status]', wx), wxId = $('[data-wechat-id]', wx);
+    var wxLabel = function (t, on) { wxCopy.textContent = t; wxCopy.classList.toggle('is-copied', !!on); wxStatus.textContent = on ? t : ''; };
+    d.addEventListener('click', function (e) {
+      var b = e.target.closest && e.target.closest('[data-wechat-open]');
+      if (!b) return;
+      e.preventDefault();
+      wxFrom = b; wxLoc = where(b);
+      // From the contact tab: close its panel first, so focus can come back to the tab.
+      var tab = b.closest('[data-ctab]');
+      if (tab) { var tb = $('[data-ctab-btn]', tab), tp = $('#ctab-panel'); if (tp && !tp.hidden && tb) tb.click(); wxFrom = tb || b; }
+      wxLabel(wxCopy.getAttribute('data-copy'));
+      if (wx.showModal) { if (!wx.open) wx.showModal(); } else wx.setAttribute('open', '');
+      track('wechat_open', { contact_location: wxLoc });
+    });
+    $('[data-wechat-close]', wx).addEventListener('click', function () { if (wx.close) wx.close(); else { wx.removeAttribute('open'); wx.dispatchEvent(new Event('close')); } });
+    wx.addEventListener('click', function (e) { if (e.target === wx && wx.close) wx.close(); }); // the backdrop
+    wx.addEventListener('close', function () {
+      var t = wxFrom; wxFrom = null;
+      if (t && t.offsetParent === null) t = $('[data-ctab-btn]') || $('[data-menu-open]');
+      if (t && t.focus) t.focus();
+    });
+    wxCopy.addEventListener('click', function () {
+      var id = wxId.textContent.trim();
+      var ok = function () { wxLabel(wxCopy.getAttribute('data-copied'), true); track('wechat_copy', { contact_location: wxLoc }); };
+      var fallback = function () {
+        var r = d.createRange(), sel = window.getSelection(), done = false;
+        r.selectNodeContents(wxId); sel.removeAllRanges(); sel.addRange(r);
+        try { done = d.execCommand('copy'); } catch (e2) {}
+        if (done) { sel.removeAllRanges(); ok(); } else wxLabel(wxCopy.getAttribute('data-failed')); // the ID stays selected
+      };
+      if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(id).then(ok, fallback); else fallback();
+    });
+  }
 
   /* Search field: clear button */
   $$('[data-search-form]').forEach(function (f) {
@@ -318,8 +379,23 @@
       .catch(function () { clearTimeout(timer); fail(); });
   }
   function sendErrorHtml(what) {
-    return 'Sorry, we could not send ' + what + '. Nothing you typed has been lost. Please try again, or email <a href="' + esc(meta('tt-email') ? 'mailto:' + meta('tt-email') : '#') + '">' +
-      esc(meta('tt-email')) + '</a> or <a href="' + esc(meta('tt-wa')) + '" target="_blank" rel="noopener">WhatsApp us</a>.';
+    return 'Sorry, we could not send ' + what + '. Nothing you typed has been lost. Please try again, or email <a data-loc="form_error" href="' + esc(meta('tt-email') ? 'mailto:' + meta('tt-email') : '#') + '">' +
+      esc(meta('tt-email')) + '</a> or <a data-loc="form_error" href="' + esc(meta('tt-wa')) + '" target="_blank" rel="noopener">WhatsApp us</a>.';
+  }
+  // form_start (GA-1): the first focus or entry in a form, once per form and page. form_type is the form's own
+  // type (quote, custom_project, preview_signup); the ticks can change it by the time it is sent.
+  $$('form[data-demo-form], form[data-signup]').forEach(function (f) {
+    var started = false, start = function () {
+      if (started) return; started = true;
+      track('form_start', { form_type: f.getAttribute('data-enquiry-type') || 'quote' });
+    };
+    f.addEventListener('focusin', start); f.addEventListener('input', start); f.addEventListener('change', start);
+  });
+  // form_error (GA-1): field names only (e.g. "email,country"), never what was typed.
+  function formError(type, errorType, fields) {
+    var p = { form_type: type, error_type: errorType };
+    if (fields && fields.length) p.error_field = fields.join(',').slice(0, 100);
+    track('form_error', p);
   }
   $$('form[data-demo-form]').forEach(function (form) {
     // "What are you interested in?" tick boxes (B2). ?interest= presets one; the enquiry list means a product quote.
@@ -374,7 +450,7 @@
 
     form.addEventListener('submit', function (e) {
       e.preventDefault();
-      var errs = [];
+      var errs = [], errNames = [];
       $$('.field', form).forEach(function (fld) {
         var input = $('input, select, textarea', fld);
         var msg = $('.field__err', fld);
@@ -384,8 +460,10 @@
         else if (input.type === 'email' && input.value && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(input.value)) bad = 'Enter a full email address, e.g. name@company.com.';
         fld.classList.toggle('has-error', !!bad);
         msg.textContent = bad;
-        input.setAttribute('aria-invalid', bad ? 'true' : 'false');
-        if (bad) errs.push(input);
+        // Searchable dropdown (combobox.js): the select holds the value; the visible field gets the state and focus.
+        var shownEl = input.hasAttribute('data-cbx-native') ? ($('[role="combobox"]', fld) || input) : input;
+        shownEl.setAttribute('aria-invalid', bad ? 'true' : 'false');
+        if (bad) { errs.push(shownEl); errNames.push(input.name || input.id || 'field'); }
       });
       // Radio groups that are required while visible (the meeting choice).
       $$('[data-radio-required]', form).forEach(function (g) {
@@ -393,10 +471,11 @@
         var bad = open && !$('input:checked', g);
         g.classList.toggle('has-error', !!bad);
         $('.field__err', g).textContent = bad ? g.getAttribute('data-required-msg') : '';
-        if (bad) errs.push($('input', g));
+        if (bad) { errs.push($('input', g)); errNames.push($('input', g).name || 'choice'); }
       });
       var box2 = $('[data-form-errors]', form);
       if (errs.length) {
+        formError(enquiryType(form, $$('input[name="interest"]:checked', form).map(function (i) { return i.value; })), 'validation', errNames);
         // Summary line at the top; focus moves to it (Components v1.9 4.11, B2).
         if (box2) {
           box2.hidden = false;
@@ -431,8 +510,9 @@
       if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
       post(payload, function () {
         sentSummary();
-        track('generate_lead', { enquiry_type: payload.enquiry_type, how_found: payload.how_found || 'not_given' }, finish);
+        track('generate_lead', { form_type: payload.enquiry_type, items_count: payload.items.length, how_found: payload.how_found || 'not_given' }, finish);
       }, function () {
+        formError(payload.enquiry_type, 'server');
         form.removeAttribute('data-sending');
         if (btn) { btn.disabled = false; btn.textContent = label; }
         if (box2) {
@@ -457,7 +537,7 @@
       err.textContent = errText;
       err.hidden = ok;
       input.setAttribute('aria-invalid', ok ? 'false' : 'true');
-      if (!ok) { input.focus(); return; }
+      if (!ok) { formError('preview_signup', 'validation', ['email']); input.focus(); return; }
       var show = function () {
         f.hidden = true;
         var done = band.querySelector('.signup__ok'); done.hidden = false; done.setAttribute('tabindex', '-1'); done.focus();
@@ -467,8 +547,9 @@
       f.setAttribute('data-sending', '1');
       post(basePayload(f, { form: 'preview_signup', enquiry_type: 'preview_signup', email: input.value.trim() }), function () {
         show();
-        track('generate_lead', { enquiry_type: 'preview_signup', how_found: 'not_given' });
+        track('sign_up', { method: 'season_preview' });
       }, function () {
+        formError('preview_signup', 'server');
         f.removeAttribute('data-sending');
         err.innerHTML = sendErrorHtml('your sign-up'); err.hidden = false; band.classList.add('has-error');
       });
@@ -481,9 +562,22 @@
     if (f0) f0.dispatchEvent(new Event('submit', { cancelable: true }));
   }
 
-  /* WhatsApp links: name the page or product in the pre-filled message */
-  var waText = body.getAttribute('data-wa');
-  if (waText) $$('a[href^="https://wa.me/"]').forEach(function (a) {
-    a.href = a.href.split('?')[0] + '?text=' + encodeURIComponent(waText);
-  });
+
+  // Searchable country dropdown (FIX-1): fetched on the buyer's first scroll, tap, click or key, or 3 s after
+  // load, whichever comes first, and only where a country field exists. So it never competes with the page's
+  // largest image. Until it runs (and without JavaScript) the native select works.
+  if (document.querySelector('select[data-combobox]')) {
+    var me = document.currentScript, cbxSrc = me && me.src ? me.src.replace(/site\.js([?#].*)?$/, 'combobox.js') : '/js/combobox.js';
+    var cbxDone = false, cbxEvents = ['scroll', 'pointerdown', 'keydown', 'touchstart'];
+    var loadCbx = function () {
+      if (cbxDone) return; cbxDone = true;
+      cbxEvents.forEach(function (ev) { window.removeEventListener(ev, loadCbx, true); });
+      var sc = document.createElement('script'); sc.src = cbxSrc; document.head.appendChild(sc);
+    };
+    cbxEvents.forEach(function (ev) { window.addEventListener(ev, loadCbx, { capture: true, passive: true }); });
+    // Mark a select opened by mouse or tap before the script arrived, so its open list is not swapped away.
+    $$('select[data-combobox]').forEach(function (sel) { sel.addEventListener('pointerdown', function () { sel.setAttribute('data-cbx-pointer', ''); }); });
+    var cbxTimer = function () { setTimeout(loadCbx, 3000); };
+    if (document.readyState === 'complete') cbxTimer(); else window.addEventListener('load', cbxTimer);
+  }
 })();
