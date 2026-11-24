@@ -124,7 +124,11 @@
     });
   }
   var ctabLabel = $('[data-ctab-label]');
-  popover($('[data-ctab-btn]'), $('#ctab-panel'), function (open) { if (ctabLabel) ctabLabel.textContent = open ? 'Close' : 'Contact us'; });
+  // GA-2: contact_tab_open on each opening (only the tab button opens it; closing sends nothing).
+  popover($('[data-ctab-btn]'), $('#ctab-panel'), function (open) {
+    if (ctabLabel) ctabLabel.textContent = open ? 'Close' : 'Contact us';
+    if (open) track('contact_tab_open', {});
+  });
 
   /* Home from 1024 px (R3): while the hero's proof strip is in view, the contact tab sits 16 px above it, then
      returns to its place. A transform only, so nothing else moves. */
